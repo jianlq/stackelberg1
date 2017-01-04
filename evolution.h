@@ -2,34 +2,35 @@
 #define EVOLUTION
 #include "Common.h"
 #include"CGraph.h"
-#include"overlay.h"
 
-extern int LOOP;
+extern int ORNUM;
+
+
 class evoluDiv{
 	private:
-		static const int MUT = 10;
+		static const int MUT = 5;
 		static const int CUL = 30;
-		static const int HOR = 10;
+		static const int HOR = 20;
 		CGraph *G;
-		vector<vector<demand>> *dem;
-		vector<overlay*> Overlay;
+		CGraph *GOR;
+		vector<demand> *dem;
 	public:
 		vector<double> x;
 		double ability;
+		double delay;
 		evoluDiv() {;}
-		evoluDiv(int m, CGraph *g, vector<vector<demand>> *d,vector<overlay*>&ov){
-			x.resize(m);
+		evoluDiv(int m, CGraph *g, CGraph *gor, vector<demand> *d){
+			x.resize(g->m);
 			G = g;
+			GOR = gor;
 			dem = d;
-			Overlay = ov;
 			randNature();	
 		}
-
-		evoluDiv(vector<double> &tx, CGraph *g, vector<vector<demand>> *d,vector<overlay*> &ov){
+		evoluDiv(vector<double> &tx, CGraph *g,  CGraph *gor,vector<demand> *d){
 			x.clear();
 			G = g;
+			GOR = gor;
 			dem = d;
-			Overlay = ov;
 			for(int i = 0; i < tx.size(); i++)
 				x.push_back(tx[i]);
 		}
@@ -40,86 +41,100 @@ class evoluDiv{
 				double r = 1.0 * rand() / (RAND_MAX);
 				nx.push_back(r * x[i] + (1 - r) * other.x[i]);
 			}
-			return evoluDiv(nx, G, dem,Overlay);
+			return evoluDiv(nx, G, GOR,dem);
 		}
 
-		bool TE(){
-			int can = 0;
-			int sumreq = 0;
-			int num = (*dem).size(); //OR1,OR2,OR3,background
-			for(int i = 0; i < num ; i++)
-				sumreq += (*dem)[i].size();	
-
-			for(int d = 0; d < (*dem)[num-1].size();d++){
-				double dis = G->dijkstraWeight(d,(*dem)[num-1][d].org, (*dem)[num-1][d].des, (*dem)[num-1][d].flow);
-				if( dis+1e-5 <=INF){
-					for( int k = 0;k< G->reqPathID[d].size();k++){
-						G->background_mark[d][G->reqPathID[d][k]] = 1;
-					}
-					can++;
-				}
+		void CalORDelay(){
+			for(int i = 0; i < G->m; i++){
+				G->Link[i]->latency = linearCal( G->Link[i]->use,G->Link[i]->capacity);
 			}
-
-			for(int i = 0; i < num-1; i++){  //// i:Overlay No
-				for(int d = 0; d < (*dem)[i].size();d++){
-					double dis = G->dijkstraWeight(d,(*dem)[i][d].org, (*dem)[i][d].des, (*dem)[i][d].flow);
-					if( dis+1e-5 < INF){
-						for( int k = 0; k < G->reqPathID[d].size();k++){
-							G->overlay_mark[i][d][G->reqPathID[d][k]] = 1;
-						}
-						can++;
-					}
-				}
-			}
-
-			if( can < sumreq ){
-				return false;
-			}
-			return true;
+			for(int i = 0; i < GOR->m; i++)
+				GOR->Link[i]->latency = G->dijkstra(GOR->Link[i]->tail,GOR->Link[i]->head,0);
 		}
 
 		////ability
 		void calAbility(){  
 			ability = 0;
-			G->clearOcc();
+			delay = 0;
 			for(int i = 0; i < G->m; i++)
 				G->Link[i]->dist = x[i];
 
-			// relaxation algorithm
-			if(!TE()){
-				ability = INF;
-				return ;
-			}
-			//underlay calculate delay for overlay
-			G->CalculateDelay(dem);
-			for(int i = 0; i < Overlay.size(); i++){
-				(*Overlay[i]).getDelay(G->get_To_overlay(i));
+			G->clearOcc();
+			double can = 0;
+			for(int i = 0; i < (*dem).size(); i++){
+				double dis = G->dijkstraLB(i,(*dem)[i].org, (*dem)[i].des, (*dem)[i].flow);
+				can = max(can, dis);
 			}
 
-			//////	relaxation	for calculate NE	
-			vector<vector<demand>> updatereq;
-			for(int i = 0;i < LOOP;i++){
-				beta =(double)1/(i+1);
-				updatereq.clear();
-				for(int i = 0; i < Overlay.size(); i++){
-					Overlay[i]->LP();
-					updatereq.push_back( Overlay[i]->getTrafficMatrix());
-				}
-				updatereq.push_back((*dem)[(*dem).size()-1]);//background traffic
-				G->CalculateDelay(&updatereq);
-				for(int i = 0; i < Overlay.size(); i++){
-					Overlay[i]->updateDelay(G->get_To_overlay(i));
-				}
-			}
-
-			// util
-			double util = G->CalculateMLU(&updatereq);
-			ability += util;
-
-			cout << " mlu: \t" << util <<endl;
-			cout << "overlay0:"<< Overlay[0]->getCost() << " \toverlay1:" << Overlay[1]->getCost() << " \toverlay2:" << Overlay[2]->getCost()<<endl;
+			double util1 = 0;
+			for(int i = 0; i < G->m; i++)
+				util1 = max(util1, (double)G->Link[i]->use);
 			
-			G->clearMark();
+			double del1 = 0;
+			for(int d = 0; d < ORNUM; d++){
+				for(unsigned int ij = 0; ij < G->reqPathID[d].size(); ij++)
+					del1 +=  (*dem)[d].flow*linearCal(G->Link[G->reqPathID[d][ij]]->use,G->Link[G->reqPathID[d][ij]]->capacity);
+			}
+
+			GOR->clearOcc();
+			CalORDelay();
+			double del2 = 0;
+			for(int i = 0; i < ORNUM; i++)
+				del2 += (*dem)[i].flow * GOR->dijkstra((*dem)[i].org,(*dem)[i].des,(*dem)[i].flow);
+			
+			/*if(del1 > INF || del2 >INF){
+				double del = 0;
+				for(int i = 0; i < ORNUM; i++){
+					del += (*dem)[i].flow * GOR->dijkstra((*dem)[i].org,(*dem)[i].des,(*dem)[i].flow);
+					cout <<GOR->canNotReach((*dem)[i].org,(*dem)[i].des)<< "  && "<<del<<"    ";
+				}
+				cout << endl<<"INF"<<endl;
+				for(int i=0;i<G->m;i++)
+					cout << G->Link[i]->latency<<" G   "<<endl;
+				cout <<endl;
+				for(int i=0;i<GOR->m;i++)
+					cout << GOR->Link[i]->latency<< "  GOR  "<<G->canNotReach(GOR->Link[i]->tail,GOR->Link[i]->head)<<"   "<<G->dijkstra(GOR->Link[i]->tail,GOR->Link[i]->head,0)<<endl;
+				cout << del1 << " delay "<<del2<<endl;
+				cout <<"util "<< util1 <<endl;
+				exit(1);
+			}*/
+
+			if(del1 >=INF && del2>=INF){
+				ability = INF;
+				return;
+			}
+
+			if( del1 < del2){
+				ability = util1;
+				delay = del1;
+				if(can + SMALL >= INF)
+					ability = INF;
+			}
+			else{
+				//printf("overlay  adjust\n");
+				delay = del2;
+				vector<demand> req;
+				for(int i = 0;i <GOR->m;i++){
+					if(GOR->Link[i]->use > 0)
+						req.push_back(demand(GOR->Link[i]->tail,GOR->Link[i]->head,GOR->Link[i]->use));
+				}
+				for( int i = ORNUM; i<(*dem).size(); i++)
+					req.push_back((*dem)[i]);
+
+				G->clearOcc();
+				for(int i = 0; i < req.size(); i++){
+					double dis = G->dijkstraLB(i,req[i].org, req[i].des, req[i].flow);
+					can = max(can, dis);
+				}
+
+				double util2 = 0;
+				for(int i = 0; i < G->m; i++)
+					util2 = max(util2, (double)G->Link[i]->use);
+				
+				ability = util2;
+				if(can + SMALL >= INF)
+					ability = INF;
+			}		
 		}
 
 		void randNature(){
@@ -154,41 +169,40 @@ bool evoluCmp(evoluDiv a, evoluDiv b){
 
 class evoluPopu{
 	private:
-		static const int YEAR = 80;
-		static const int YEARCUL = 40;
+		static const int YEAR = 100;
+		static const int YEARCUL = 50;
 		vector<evoluDiv> popu;
 		CGraph *G;
-		vector<vector<demand>> *dem;
-		FILE *herofile;
+		CGraph *GOR;
+		vector<demand> *dem;
+		double pm;
 	public:
 		evoluDiv hero;
-		// n 个体数，m：每个个体对应的解
-		evoluPopu(int n, int m, CGraph *g, vector<vector<demand>> *d,vector<overlay*> &mutil){
+		evoluPopu(int n, int m, CGraph *g, CGraph *gor,vector<demand> *d ){
+			pm = 0.25;
 			popu.clear();
 			G = g;
+			GOR = gor;
 			dem = d;
 			for(int i = 0; i < n; i++){
-				evoluDiv divi(m, G, dem,mutil);
+				evoluDiv divi(m, G, GOR,dem);
 				popu.push_back(divi);
 			}
-			hero = evoluDiv(m, G, dem,mutil);
-			herofile = fopen("outputFile//hero.txt","a");
+			hero = evoluDiv(m, G, GOR,dem);
 		}
 		evoluDiv evolution(){
-			fprintf(herofile,"Start:\n ");
 			for(int i = 0; i < hero.x.size(); i++)
 				hero.x[i] = G->Link[i]->dist;
-			//hero.x[i] = 1;
+			
 			hero.calAbility();
-			fprintf(herofile, "%f\n", hero.ability);
-
-			for(int i = 0; i < popu.size(); i++)
+			for(int i = 0; i < popu.size(); i++){
 				popu[i].calAbility();
+			}
 			
 			sort(popu.begin(), popu.end(), evoluCmp);
 			
+
 			for(int curYear = 1; curYear <= YEAR; curYear++){
-				printf("curYear %d\n", curYear);
 				int n = popu.size(), getMore = 0;
 				vector<evoluDiv> sons;
 				for(int i = 0; i+1 < n; i+=2){
@@ -198,7 +212,9 @@ class evoluPopu{
 				}
 				int m = sons.size();
 				for(int i = 0; i < m; i++){
-					sons[i].mutation();
+					double p = rand()%100*0.01;
+					if( p < pm ) 
+						sons[i].mutation();
 					if(curYear > YEARCUL)
 						sons[i].culture(hero);
 					sons[i].calAbility();
@@ -213,12 +229,11 @@ class evoluPopu{
 					}
 				}
 				if(getMore){
-					fprintf(herofile, "Year %d: find hero \n", curYear);
-					fprintf(herofile,"%f\n", hero.ability);
+					;
+					//printf("Year %d: find hero \n", curYear);
+					//printf("%f\n", hero.ability);
 				}
 			}
-			fprintf(herofile,"end\n\n\n\n");
-			fclose(herofile);
 			return hero;
 		}
 };

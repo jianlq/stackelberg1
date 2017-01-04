@@ -47,53 +47,58 @@ void CGraph::KSP(int s, int t, unsigned int k)
 
 
 //计算每个OD对之间的路径
+////  计算每个 OD对之间的路径   
 bool CGraph::GAinit(vector<demand> &req){
-
-	////ksp
-	//reqlistPath.clear();
-	//for(unsigned int i=0;i<req.size();i++){  
-	//	KSP(req[i].org,req[i].des,K); //计算得到一个OD对的listPath
-	//	reqlistPath.push_back(listPath);
-	//	if(listPath.size()<K)
-	//		return false;
-	//}
-	//return true;
 	
-	////// DFS
 	reqlistPath.clear();
+	for(unsigned int i=0;i<req.size();i++){  
+
+		KSP(req[i].org,req[i].des,K); //计算得到一个OD对的listPath
+
+		int k = 0;
+		while(listPath.size() < K){
+			listPath.push_back(listPath[k]);
+			k++;
+		}
+
+		reqlistPath.push_back(listPath);
+	}
+	return true;
+
+	////// DFS
+	/*reqlistPath.clear();
 	for(unsigned int i=0;i<req.size();i++){
 		int j = 0;
 		vector<vector<CEdge*>> reqpath;
 		while(j < K){
 			SetUNVISITED();
+			pathver.clear();
 			myDFS(req[i].org,req[i].des);
-			if(DFSflag == 1 ){
+			if(DFSflag){
 				j++;
 				vector<CEdge*> tmp;
-				for(int p = 0;p <pathver.size();p += 2){
+				int p = 0;
+				while( p < (pathver.size()-1) ){
 					int s = pathver[p],t = pathver[p+1];
 					for(unsigned int  a = 0; a <Link.size(); a++){
 						if(Link[a]->tail == s && Link[a]->head == t ){
 							tmp.push_back(Link[a]);
-						    break;
+							break;
 						}
 					}
+					p++;
 				}
 				reqpath.push_back(tmp);
 			}
 		}
 		if( reqpath.size() < K)
 			return false;
-
-		reqlistPath.push_back(reqpath);
-		
+		reqlistPath.push_back(reqpath);		
 	}
-	return true;
-
+	return true;*/
 }
 
 void CGraph::myDFS(int s,int t){
-	  
 		if (!visit[s]){
 		   pathver.push_back(s);
 		   visit[s] = true;
@@ -103,16 +108,15 @@ void CGraph::myDFS(int s,int t){
 			return ; 
 		}
 		vector<int> unvit;
-		int ss ,ret=0; // ret表示回溯点
-		for(unsigned  int i =0;i<adjL[s].size();i++){
+		int ss ,ret=0; 
+		for(unsigned  int i = 0; i < adjL[s].size();i++){
 			if(visit[adjL[s][i]->head])
 				continue;	
 			else
 				unvit.push_back(adjL[s][i]->head); //没有访问的顶点编号		
 		}		
 		if(unvit.size()== 0) {  // 没有未被访问的邻节点
-			if(pathver.size()>0)
-				pathver.pop_back();
+			pathver.pop_back();
 			if(pathver.size()>0) { 
 				ss = pathver[pathver.size()-1];
 				ret = 1;  //表示有回溯点
@@ -136,7 +140,7 @@ void heuristicLB(CGraph *G,vector<demand>&req,int ornum,double &mlu,double &dela
 	double util = 0;
 	int block = 0,success = 0;
 	for(unsigned int i = 0; i < req.size(); i++){
-		double ret = G->dijkstra(i,req[i].org, req[i].des, req[i].flow,1,0,1); 
+		double ret = G->dijkstraLB(i,req[i].org, req[i].des, req[i].flow); 
 		if(ret >= INF)
 			block++;
 		else{
@@ -151,56 +155,18 @@ void heuristicLB(CGraph *G,vector<demand>&req,int ornum,double &mlu,double &dela
 		//mlu
 		mlu = 0;
 		for(int i=0;i<G->m;i++){  
-			mlu = max(mlu,G->Link[i]->use/G->Link[i]->capacity);
+			mlu = max(mlu,G->Link[i]->use);
 		}
 
 		//delay
 		delay = 0;
-		for(int i=0;i<G->m;i++){  
-			G->Link[i]->latency = linearCal(G->Link[i]->use,G->Link[i]->capacity);
+		for(int d = 0; d < ornum;d++){
+			for(unsigned int ij = 0; ij < G->reqPathID[d].size(); ij++)
+				delay +=  req[d].flow*linearCal(G->Link[G->reqPathID[d][ij]]->use,G->Link[G->reqPathID[d][ij]]->capacity);
 		}
-		for(int d=0;d < ornum;d++){
-			for(unsigned int ij=0;ij<G->reqPathID[d].size();ij++)
-				delay +=  G->Link[G->reqPathID[d][ij]]->latency;
-		}
-
 	}	
 }
 
-// delay
-void heuristicOR(CGraph *G,vector<demand>&req,int ornum,double &delay,double &mlu){
-	G->clearOcc();
-	int block = 0,success = 0;
-	for(unsigned int i = 0; i < req.size(); i++){
-		double ret = G->dijkstra(i,req[i].org, req[i].des, req[i].flow,0,1,1); 
-		if(ret+1e-5 >= INF)
-			block++;
-		else{
-			success++;		
-		}
-	}
-	mlu = delay = INF;
-	if(success == req.size()){	
-		mlu = 0,delay = 0;
-		//mlu
-		mlu = 0;
-		for(int i=0;i<G->m;i++){  
-			mlu = max(mlu,G->Link[i]->use/G->Link[i]->capacity);
-		}
-
-		//delay
-		delay = 0;
-		for(int i = 0; i < G->m; i++){  
-			G->Link[i]->latency = linearCal(G->Link[i]->use,G->Link[i]->capacity);
-		}
-		for(int d = 0;d < ornum;d++){
-			for(unsigned int ij = 0;ij < G->reqPathID[d].size(); ij++)
-				delay +=  G->Link[G->reqPathID[d][ij]]->latency;
-		}
-		
-		cout << "HOR   "<<mlu<<"\t"<<delay<<endl;
-	}
-}
 
 
 #endif

@@ -53,8 +53,8 @@ double NashLB(CGraph *G,CGraph *GOR,vector<demand> & req){
 		IloExpr constraint(env);
 		for(int d = 0; d <  num; d++)
 			constraint += req[d].flow*x[d][i];
-		model.add( constraint <= G->Link[i]->capacity ); 
-		model.add( constraint <= z*G->Link[i]->capacity );
+		model.add( constraint < G->Link[i]->capacity ); 
+		model.add( constraint <= z );
 	}
 	model.add(IloMinimize(env,z));
 
@@ -67,14 +67,14 @@ double NashLB(CGraph *G,CGraph *GOR,vector<demand> & req){
 			double loadc = 0;
 			for(int d=0;d < num;d++)
 				loadc += EEsolver.getValue(x[d][i])*req[d].flow;
-			G->Link[i]->latency = linearCal(loadc,G->Link[i]->capacity);
+			G->Link[i]->dist = linearCal(loadc,G->Link[i]->capacity);
 		}
 
 		//GOR delay
-		for(int m=0;m<GOR->m;m++){	
-			bool flag=false;
-			double dmin=0;
-			for(int d=0;d<num;d++){
+		for(int m = 0;m < GOR->m; m++){	
+			bool flag = false;
+			double dmin = 0;
+			for(int d = 0; d < num; d++){
 				if (GOR->Link[m]->tail == req[d].org && GOR->Link[m]->head == req[d].des && (req[d].flow>0)){
 					if(flag==false){
 						flag=true;
@@ -88,7 +88,7 @@ double NashLB(CGraph *G,CGraph *GOR,vector<demand> & req){
 				}
 			} 
 			if(flag == false)
-				GOR->Link[m]->dist = G->dijkstra(0,GOR->Link[m]->tail,GOR->Link[m]->head,0.0,0,0,0);
+				GOR->Link[m]->dist = G->dijkstra(GOR->Link[m]->tail,GOR->Link[m]->head,0);
 		} 
 	}
 	for(int i = 0; i < req.size(); i++)

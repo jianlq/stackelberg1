@@ -4,11 +4,19 @@
 
 double linearCal(double x, double c)
 {
-	double util=x/c;
-	if(util<0.3333) return x*1;
-	else if(util<0.6667) return x*3-2.0*c/3.0;
-	else if(util<0.9) return x*10-16*c/3;
-	else return x*70-178*c/3;
+	if(LINEAR){
+		double util=x/c;
+		if(util<0.3333) return x*1;
+		else if(util<0.6667) return x*3-2.0*c/3.0;
+		else if(util<0.9) return x*10-16*c/3;
+		else return x*70-178*c/3;
+	}
+	else{
+		if( x >= c)
+			return INF;
+		else
+			return 1.0/(c-x);
+	}
 }
 
 class CEdge{
@@ -159,17 +167,16 @@ public:
 	bool GAinit(vector<demand>& req);//初始化每个req的路径
 	void myDFS(int s,int t);
 	int DFSflag;
-	vector<vector<vector<CEdge*>>> reqlistPath; //DFS
-	//vector<vector<CPath*> > reqlistPath;//KSP
+	//vector<vector<vector<CEdge*>>> reqlistPath; //DFS
+	vector<vector<CPath*> > reqlistPath;//KSP
 	vector<int> pathver;
 
 	// dijkstra
 	vector<vector<int>> reqPathID;
+	double dijkstraLB(int id,int s, int t, double dm);
 	double dijkstra(int s, int t, double dm );
-	double dijkstra(int id,int s, int t,double dm,bool HeuTE,bool HeuOR,bool needpath);
 
 	//mutilOverlay
-	double dijkstraWeight(int id,int s, int t, double dm);
 	vector<vector<int>> background_mark; //每个req边上的分配
 	vector<vector<vector<int>>> overlay_mark;
 	vector<vector<double>> to_overlay; //to overlay delay
@@ -239,7 +246,7 @@ CGraph::CGraph(char* inputFile)
 		vert.insert(a);
 		vert.insert(b);
 		c = rand()%MAXWEIGHT+2;
-		CEdge *e=new CEdge(i,a,b,c,d+MINCAPACITY);
+		CEdge *e=new CEdge(i,a,b,c,d);
 		Link.push_back(e);
 		adjL[a].push_back(e); //出度边
 		adjRL[b].push_back(e); //入度边
@@ -279,73 +286,14 @@ double CGraph::dijkstra(int s, int t, double dm){
 		flag[cur] = 1;
 		for(unsigned int i = 0; i < adjL[cur].size(); i++){
 			CEdge *e = adjL[cur][i];
-			if(d[e->head] > d[e->tail] + e->dist ){
-				d[e->head] = d[e->tail] + e->dist;
+			if(d[e->head] > d[e->tail] + e->latency ){
+				d[e->head] = d[e->tail] + e->latency;
 				p[e->head] = e->id;
 			}		
 		}
 		cur = -1;
-		for(int i = 0; i < n; i++)
-			if(!flag[i] && (cur == -1 || d[cur] > d[i] ))
-				cur = i;
-	}while(cur != -1);
-
-	cur = t;
-	do{
-		if(p[cur] == -1)
-			break;
-		Link[p[cur]]->use += dm;
-		cur = Link[p[cur]]->tail;
-	}while(cur != s);
-
-	return d[t];
-}
-
-double CGraph::dijkstra(int id,int s, int t,double dm,bool HeuTE,bool HeuOR,bool needpath){
-	vector<int> p, flag;
-	vector<double> d;//latency
-	for(int i = 0; i < n; i++){  
-		p.push_back(-1);
-		flag.push_back(0);
-		d.push_back(INF);
-	}
-
-	if(HeuOR){
-		for(int i = 0; i < m; i++){
-			CEdge *e = Link[i];
-			if(e->capacity - e->use <= dm)
-				e->latency = INF;
-			else
-				e->latency = 1.0/(e->capacity - e->use - dm);
-		}
-	}
-
-	d[s] = 0;
-	int cur = s;
-	do{
-		flag[cur] = 1;
-		for(unsigned int i = 0; i < adjL[cur].size(); i++){
-			CEdge *e = adjL[cur][i];	
-			//util	
-			if(HeuTE){
-				double util = ( dm + e->use )/e->capacity;
-				double tail_util = max(util,d[e->tail]);
-				if(e->capacity - e->use >= dm && d[e->head] > tail_util ){
-					d[e->head] = tail_util;
-					p[e->head] = e->id;
-				}
-			}
-			// OR latency
-			else{
-				if( e->capacity - e->use >= dm && d[e->head] > d[e->tail] + e->latency ){ ////latency	
-					d[e->head] = d[e->tail] + e->latency;
-					p[e->head] = e->id;
-				}
-			}
-		}
-		cur = -1;
-		for(unsigned int i = 0; i < this->ver.size(); i++)
-			if(!flag[ver[i]] && (cur == -1 || d[cur] > d[ver[i]] ))
+		for(int i = 0; i < this->ver.size(); i++)
+			if(!flag[ver[i]] && d[ver[i]] < INF && (cur == -1 || d[cur] > d[ver[i]] ))
 				cur = ver[i];
 	}while(cur != -1);
 
@@ -357,85 +305,80 @@ double CGraph::dijkstra(int id,int s, int t,double dm,bool HeuTE,bool HeuOR,bool
 		cur = Link[p[cur]]->tail;
 	}while(cur != s);
 
-	if(needpath){
-		reqPathID[id].clear();
-		cur = t;
-		do{
-			if(p[cur] == -1)
-				break;
-			this->reqPathID[id].push_back(p[cur]);
-			cur = Link[p[cur]]->tail;
-		}while(cur != s);
-		reverse(reqPathID[id].begin(),reqPathID[id].end());
-	}
-
 	return d[t];
 }
 
-double CGraph::dijkstraWeight(int id,int s, int t, double dm ){
-		vector<int> p, flag;
-		vector<double> d;
-		for(int i = 0; i < n; i++){
-			p.push_back(-1);
-			flag.push_back(0);
-			d.push_back(INF);
-		}
-
-		d[s] = 0;
-		int cur = s;
-		do{	
-			flag[cur] = 1;
-			for(unsigned int i = 0; i < adjL[cur].size(); i++){
-				CEdge *e = adjL[cur][i];
-				if(e->capacity - e->use >= dm && d[e->head] > d[e->tail] + e->dist ){
-					d[e->head] = d[e->tail] + e->dist;
-					p[e->head] = e->id;
-				}		
-			}
-			cur = -1;
-			for(int i = 0; i < n; i++)
-				if(!flag[i] && d[i] < INF && (cur == -1 || d[cur] > d[i] ))
-					cur = i;
-		}while(cur != -1);
-
-		cur = t;
-		do{
-			if(p[cur] == -1)
-				break;
-			Link[p[cur]]->use += dm;
-			cur = Link[p[cur]]->tail;
-		}while(cur != s);
-
-		reqPathID[id].clear();
-		cur = t;
-		do{
-			if(p[cur] == -1)
-				break;
-			reqPathID[id].push_back(p[cur]);
-			cur = Link[p[cur]]->tail;
-		}while(cur != s);
-		reverse(reqPathID[id].begin(),reqPathID[id].end());
-		//copy(reqPathID[id].begin(),reqPathID[id].end(),ostream_iterator<int>( cout, " " ));
-		//cout<<"log1:"<<reqPathID[id].size()<<endl;
-		
-		return d[t];		
+extern bool selfishrouting;
+double CGraph::dijkstraLB(int id,int s, int t, double dm ){
+	
+	vector<int> p, flag;
+	vector<double> d;
+	for(int i = 0; i < n; i++){
+		p.push_back(-1);
+		flag.push_back(0);
+		d.push_back(INF);
 	}
+
+	if(selfishrouting){
+		for(int i = 0; i < m; i++){
+			CEdge *e = Link[i];
+			if(e->capacity- e->use <= dm)
+				e->dist = INF;
+			else{
+				e->dist = 1.0/(e->capacity - e->use - dm);
+			}
+		}
+	}
+
+	d[s] = 0;
+	int cur = s;
+	do{	
+		flag[cur] = 1;
+		for(unsigned int i = 0; i < adjL[cur].size(); i++){
+			CEdge *e = adjL[cur][i];
+			if(d[e->head] > d[e->tail] + e->dist ){
+				d[e->head] = d[e->tail] + e->dist;
+				p[e->head] = e->id;
+			}		
+		}
+		cur = -1;
+		for(int i = 0; i < n; i++)
+			if(!flag[i] && d[i] < INF && (cur == -1 || d[cur] > d[i] ))
+				cur = i;
+	}while(cur != -1);
+
+	cur = t;
+	do{
+		if(p[cur] == -1)
+			break;
+		Link[p[cur]]->use += dm;
+		cur = Link[p[cur]]->tail;
+	}while(cur != s);
+
+	reqPathID[id].clear();
+	cur = t;
+	do{
+		if(p[cur] == -1)
+			break;
+		reqPathID[id].push_back(p[cur]);
+		cur = Link[p[cur]]->tail;
+	}while(cur != s);
+	reverse(reqPathID[id].begin(),reqPathID[id].end());
+
+	return d[t];		
+}
 
 
 void genGraph(int n, int m, char route[]){ 
 	FILE *out = fopen(route, "w");
 	fprintf(out,"%d %d\n",n,m);
-	for(int i = 1; i < min(n, m+1); i++){
-		int t = rand()%i, w = rand()%MAXWEIGHT+1;
-		int c = rand()%(MAXCAPACITY-MINCAPACITY)+2;
-		fprintf(out, "%d %d %d %d\n", i, t, w,c);
-	}
-	for(int i = 0; i < m-n+1; i++){
-		int s = rand()%n, t = rand()%n, w = rand()%MAXWEIGHT+1;
-		int c = rand()%(MAXCAPACITY-MINCAPACITY)+2;
-		while(t == s)
+	for(int i = 0; i < m; i++){
+		int s = rand()%n, t;
+		int c = MINCAPACITY + rand()%(MAXCAPACITY - MINCAPACITY)+1;
+		do{
 			t = rand()%n;
-		fprintf(out, "%d %d %d %d\n", t, s, w, c);
+		}while(s == t);
+		fprintf(out, "%d %d %d %d\n", s, t, 1, c);
 	}
 	fclose(out);
 }

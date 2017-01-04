@@ -1,193 +1,180 @@
 ﻿#include"LB.h"
 #include"evolutionbit.h"
-#include"nash.h"
+#include"evolution.h"
+
+vector<demand> eqOR;
+vector<demand> eqTE;
+vector<demand> eqbase;
+
+ bool selfishrouting = false;
+ int ORNUM ;
+void SelfishRouting(CGraph *G, double &maxLinkUtil, double &sumDelay){
+	selfishrouting = true;
+	maxLinkUtil = sumDelay = 0;
+	G->clearOcc();
+	int NUMEVENT = eqTE.size();
+	for(int i = 0; i < NUMEVENT; i++){
+		double can = G->dijkstraLB(i,eqTE[i].org, eqTE[i].des, eqTE[i].flow);
+		if(can + SMALL >= INF){ //无解
+			maxLinkUtil = INF;
+			sumDelay = INF;
+			return;
+		}
+	}
+
+	for(int i = 0; i < G->m; i++){
+		maxLinkUtil = max(maxLinkUtil, (double)G->Link[i]->use);
+	}
+
+	for(int d = 0; d < eqOR.size(); d++){
+		for(unsigned int ij = 0;ij < G->reqPathID[d].size(); ij++)
+			sumDelay +=  eqOR[d].flow*linearCal( G->Link[G->reqPathID[d][ij]]->use,G->Link[G->reqPathID[d][ij]]->capacity);
+	}
+	selfishrouting = false;
+}
+
+void CentralizedOptimization(CGraph *G, double &maxLinkUtil, double &sumDelay){
+	G->clearOcc();
+	ilpSolver(G,eqTE,ORNUM);
+	maxLinkUtil = G->mlu;
+	sumDelay = G->delay;
+	if(G->mlu + SMALL > INF){
+		maxLinkUtil = INF;
+		sumDelay = INF;
+	}
+}
+
+void Stackelberg(CGraph *G, CGraph *GOR,double &maxLinkUtil, double &sumDelay){
+	evoluPopu popubit(50,G->m,G,GOR,&eqTE);
+	evoluDiv ret = popubit.evolution();
+	maxLinkUtil = INF;
+	sumDelay = INF;
+	if(ret.ability + SMALL < INF){
+		maxLinkUtil = ret.ability;
+		sumDelay = ret.delay;
+	}
+}
+
+int TestCase(CGraph *G, CGraph *GOR,double &alg1, double &alg1w,double &alg2, double &alg2w,double &alg3, double &alg3w){	
+
+	printf("\n*****************************************\n");
+	double mlu, sd;
+
+	SelfishRouting(G, mlu, sd);  
+	double dbase = sd;
+	printf("SelfishRouting:\t\t%f\t%f\n", mlu, sd);
+	double gremlu = mlu;
+	
+	CentralizedOptimization(G, mlu, sd);  
+	double ubase = mlu;
+	printf("Centralized Optimization:\t%f\t%f\n", mlu, sd);
+	
+	alg1 = gremlu/ubase;
+	alg1w = 1;
+
+	////ilp
+	alg2 = mlu/ubase;
+	alg2w = sd/dbase;
+
+	Stackelberg(G, GOR,mlu, sd);
+	printf("Stackelberg:\t\t%f\t%f\n", mlu, sd);
+	alg3 = mlu/ubase;
+	alg3w = sd/dbase;
+
+	if(ubase + SMALL > INF || mlu >= INF)
+		return 0;
+	else
+		return 1;
+}
 
 int main(){
 	srand((unsigned)time(NULL));
 	int Time = 3;
-	int CASEnum= 30;	
+	int CASEnum= 200;	
 
-	vector<double>CONSIDER;
-	int CON_VALUE = 25;
-	double c = 0;
-	for(int i=0;i <= CON_VALUE;i++){
-		CONSIDER.push_back(c);
-		c += 0.2;
-	}
-	int LOOP  = 100;
-
-	for(int i =0;i<Time;i++){
-
-		int conN = CONSIDER.size();
-		vector<double> smlu(conN,0) ;
-		vector<double> sdelay(conN,0);
-
-		double mlu = 0;
-		double mludelay = 0;
-
-		double delaymlu = 0;
-		double delay = 0;
-
-		double nashmlu = 0;
-		double nashdelay = 0;
-
-		vector<int> successCase (conN, 0) ;
-
-		int sucCaseLB = 0,sucCaseOR = 0,sucCaseNash = 0;
-
-		for(int casenum = 0; casenum < CASEnum; casenum++){
-
-			genGraph(12,64,"inputFile//graph.txt");
-			genGraphOR(12,5,10,"inputFile//graphOR.txt");
-			CGraph *G = new CGraph("inputFile//graph.txt");
-			CGraph *GOR = new CGraph("inputFile//graphOR.txt");
-
-			vector<demand> eqOR;
-			vector<demand> eqTE;
-			vector<demand> eqbase;
-
-			//eqbase.clear();//background流 
-			for(int i = 0; i < BGNUM; i++){
-				int s = rand()%G->n, t;
-				do{
-					t = rand()%G->n;
-				}while( s == t || G->canNotReach(s,t));
-				eqbase.push_back(demand(s, t, rand()%(MAXDEMAND)+1));
-			}
-
-			////Overlay  产生demand
-			//eqOR.clear(); 
-			for(int i =0 ;i<GOR->m;i++)
-				if(G->canNotReach(GOR->Link[i]->tail, GOR->Link[i]->head))
-					continue;
-				else
-					eqOR.push_back(demand(GOR->Link[i]->tail,GOR->Link[i]->head,rand()%(MAXDEMAND)+1));
-
-			//eqTE.clear(); 
-			for(unsigned int i=0;i<eqOR.size();i++)
-				eqTE.push_back(eqOR[i]);
-			int ornum = eqTE.size();
-			for(unsigned int i=0;i<eqbase.size();i++)
-				eqTE.push_back(eqbase[i]);
-
-			FILE *cur = fopen("outputFile//mludelay.csv", "a");
-			fprintf(cur,"\n\n\n%d\n",casenum);
-			
-			double lbdic = 0,ordic=0;
-			G->clearOcc();
-			LBdictor(G,eqTE,ornum);
-
-			if( G->mlu + 1e-5 <= INF ){
-				sucCaseLB++;
-				mlu += G->mlu;
-				mludelay += G->delay;
-				lbdic = G->mlu;
-			}
-			else
-				break;
-
-			fprintf(cur,",LB,,%lf,%lf\n",G->mlu,G->delay);
-
-			G->clearOcc();
-			ORdictor(G,eqbase,eqOR);
-
-			if( G->delay + 1e-5 <= INF ){
-				sucCaseOR++;
-				delay += G->delay;
-				delaymlu += G->mlu;
-				ordic = G->delay;
-			}
-			else
-				break;
-			fprintf(cur,",OR,,%lf,%lf\n",G->mlu,G->delay);
-
-			G->clearOcc();
-			if(!G->GAinit(eqTE)){
-				cout << "*****GA init failed***** "<<endl;
-				break;
-			}
-
-			//// nash		
-			FILE *nash = fopen("outputFile//nash.csv", "a");
-			int nacase = 0;
-			double loopnashmlu=0,loopnashdelay=0;
-			fprintf(nash,"\n\n nash \n");
-			for(int i =0;i<LOOP;i++){
-				G->clearOcc();
-				GOR->clearOcc();
-				double curmlu = NashLB(G,GOR,eqTE);
-				if(curmlu + 1e-5 >= INF){
-					fprintf(nash,"NashEE unfeasible\n");
-					break;
-				}
-				double curdelay = NashOR(GOR,eqOR);
-				if( curdelay + 1e-5 >= INF){
-					fprintf(nash,"NashOR unfeasible\n");
-					break;
-				}
-				eqTE.clear();
-				for(int i=0;i<GOR->m;i++){
-					if(GOR->Link[i]->use>0)
-						eqTE.push_back(demand(GOR->Link[i]->tail,GOR->Link[i]->head,GOR->Link[i]->use));
-				}
-				for(unsigned int i=0;i<eqbase.size();i++)
-					eqTE.push_back(eqbase[i]);
-
-				nacase++;
-				loopnashmlu += curmlu;
-				loopnashdelay += curdelay;
-				fprintf(nash,"%lf,%lf\n",curmlu,curdelay);
-				cout<<curmlu<<"\t"<<curdelay<<endl;
-			}
-			fclose(nash);
-
-			if(nacase){
-				nashmlu += (loopnashmlu/nacase);
-				nashdelay += (loopnashdelay/nacase);
-				sucCaseNash++;
-			}	
-			fprintf(cur,",Nash,,%lf,%lf\n\n",loopnashmlu/nacase,loopnashdelay/nacase);
-			fclose(cur);
-
-			for(unsigned int con = 0;con < CONSIDER.size();con++){
-
-				int n = 150;//种群个体数目
-				int m = eqTE.size();
-				evoluPopubit popubit(n,m,G,GOR,&eqTE,&eqOR,lbdic,ordic,CONSIDER[con]);
-				(popubit).evolution();
-				cout<<"S\t"<<popubit.hero.mlu<<"\t"<<popubit.hero.delay <<endl;
-
-				if( (popubit.hero.mlu +1e-5) >= INF ||  (popubit.hero.delay  + 1e-5) >= INF ){
-					break;
-				}
-
-				cur = fopen("outputFile//mludelay.csv", "a");
-
-				fprintf(cur,",S,%lf,%lf,%lf\n",CONSIDER[con],popubit.hero.mlu,popubit.hero.delay);
-				fclose(cur);
-
-				successCase[con] += 1;
-				smlu[con] += popubit.hero.mlu;
-				sdelay[con] += popubit.hero.delay;
-
-			} // end of CONSIDER for
-
-			delete G;
-			delete GOR;
-
-		} // end of CASENum for
-
+	for(int i = 0;i < Time;i++){
 		FILE *res = fopen("outputFile//result.csv", "a");		
 		fprintf(res,"%d case average\n",CASEnum);
-		fprintf(res,",,CONSIDER,successCase,Energy Efficiency,throughput\n");
-		for(unsigned int con = 0;con < CONSIDER.size();con++){
-			fprintf(res, ",S,%lf,%d,%lf,%lf\n",CONSIDER[con],successCase[con],smlu[con]/successCase[con],sdelay[con]/successCase[con]); 
-		}
-		fprintf(res,",,,successCase,Energy Efficiency,throughput\n");
-		fprintf(res, "\n\n,EE,,%d,%lf,%lf\n",sucCaseLB,mlu/sucCaseLB,mludelay/sucCaseLB);
-		fprintf(res, ",OR,,%d,%lf,%lf\n",sucCaseOR,delay/sucCaseOR,delaymlu/sucCaseOR);
-		fprintf(res, ",Nash,,%d,%lf,%lf\n",sucCaseNash,nashmlu/sucCaseNash,nashdelay/sucCaseNash);
+		fprintf(res,",SelfishRouting,,,Traffic Engineering,,,Stackelberg\n");
 		fclose(res);
+		for(int NUMDEMAND = 5; NUMDEMAND <= 200; NUMDEMAND += 5){
+			int sucCase = 0 ;
+			double   alg1 = 0, alg2 = 0, alg3 = 0;
+			double   alg1w = 0, alg2w = 0, alg3w = 0;
+
+			for(int casenum = 0; casenum < CASEnum; casenum++){
+
+				genGraph(18,98,"inputFile//graph.txt");
+				genGraphOR(18,9,45,"inputFile//graphOR.txt");
+				CGraph *G = new CGraph("inputFile//graph.txt");
+				CGraph *GOR = new CGraph("inputFile//graphOR.txt");
+			
+				
+				eqbase.clear();
+				int BGNUM;
+				if( NUMDEMAND > 100){
+					ORNUM = NUMDEMAND*(2.0/5.0);
+					BGNUM = NUMDEMAND - ORNUM;
+					
+				}
+				else{
+					ORNUM = rand()%NUMDEMAND + 1;
+					BGNUM = NUMDEMAND - ORNUM;
+					
+				}
+				
+				for(int i = 0; i < BGNUM; i++){
+					int s , t;
+					do{
+						s = rand()%G->n;
+						t = rand()%G->n;
+					}while( s == t || G->canNotReach(s,t));
+					eqbase.push_back(demand(s, t, rand()%(MAXDEMAND)+1));
+				}
+
+			
+				eqOR.clear();
+				for(int i = 0; i < ORNUM; i++){
+					int n = GOR->ver.size();
+					int s1, t1;
+					int org , dst;
+					do{
+						s1 = rand()% n;
+						t1 = rand()% n;
+						org = GOR->ver[s1];
+						dst = GOR->ver[t1];
+					}while( s1 == t1 || G->canNotReach(org, dst) || GOR->canNotReach( org, dst) );	
+					eqOR.push_back(demand(org, dst, rand()%(MAXDEMAND)+1));
+				}
+				
+				eqTE.clear();
+				for(unsigned int i=0;i<eqOR.size();i++)
+					eqTE.push_back(eqOR[i]);
+				for(unsigned int i=0;i<eqbase.size();i++)
+					eqTE.push_back(eqbase[i]);
+				
+				double a, b, c, d, e, f;
+				int success = TestCase(G,GOR, a, b, c, d, e, f);
+				sucCase += success;
+			
+				if(success){
+					alg1 += a;
+					alg1w += b;
+					alg2 += c;
+					alg2w += d;
+					alg3 += e;
+					alg3w += f;
+				}
+				delete G;
+				delete GOR;
+				
+			} // end of CASENum for
+
+			res = fopen("outputFile//result.csv", "a");		
+			fprintf(res, "%d,%lf,%lf,,%lf,%lf,,%lf,%lf \n",NUMDEMAND, alg1/sucCase, alg1w/sucCase, alg2/sucCase, alg2w/sucCase, alg3/sucCase,alg3w/sucCase); 
+			fclose(res);
+		
+		}
 	}
 	system("pause");
 	return 0;

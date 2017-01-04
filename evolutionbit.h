@@ -6,8 +6,8 @@
 // 个体 individual
 class evoluDivbit{
 private:
-	static const int MUT = 6; //变异位数
-	static const int HER = 5; //学习位数
+	static const int MUT = 10; //变异位数
+	static const int HER = 10; //学习位数
 	double consider;
 	CGraph *G;
 	CGraph *GOR;
@@ -142,9 +142,9 @@ bool Cmp2(evoluDivbit a, evoluDivbit b){
 ////种群
 class evoluPopubit{
 private:
-	static const int YEAR = 70;
+	static const int YEAR = 100;
 	static const int YEARCUL = 50;
-	static const int NOHERO = 30;
+	static const int NOHERO = 40;
 	double pm;
 	vector<evoluDivbit> popu;
 	CGraph *G;
@@ -263,19 +263,20 @@ double evoluDivbit::GAability(){
 	this->G->clearOcc(); 
 	for(unsigned int d=0;d<G->reqPathNo.size();d++){
 		int num=G->reqPathNo[d]; 
-		//vector<CEdge*> lsEg=G->reqlistPath[d][num]->listEdge; //KSP
-		vector<CEdge*> lsEg=G->reqlistPath[d][num]; //DFS
+		vector<CEdge*> lsEg=G->reqlistPath[d][num]->listEdge; //KSP
+		//vector<CEdge*> lsEg=G->reqlistPath[d][num]; //DFS
 		vector<CEdge*>::iterator it,end=lsEg.end();
 		for(it=lsEg.begin();it!=end;it++){
 			(*it)->use += (*dem)[d].flow;
 		}
 	}
 
+	/////先算这样的摆法overlay的延时，如果小于调整之后的就不调整
 	this->GOR->clearOcc();
 	Caldelay();
 	double del = 0;
 	for (unsigned int d = 0; d < demor->size(); d++){		
-			del += GOR->dijkstra((*demor)[d].org, (*demor)[d].des, (*demor)[d].flow);
+		del += (*demor)[d].flow*GOR->dijkstra((*demor)[d].org, (*demor)[d].des, (*demor)[d].flow);
 	}
 
 	//新的流量矩阵计算TE的目标
@@ -294,7 +295,7 @@ double evoluDivbit::GAability(){
 	double lb,del2;
 	heuristicLB(G,req,ornum,lb,del2);
 	
-	//cout << del <<" "<<del2<<" ***;   ";
+	
 	double ab = MIN;
 	if ( del+1e-5 <= INF && lb+1e-5 <= INF){
 		this->mlu = lb;
@@ -307,7 +308,7 @@ double evoluDivbit::GAability(){
 
 void evoluDivbit::Caldelay(){
 	for(int ij=0;ij<G->m;ij++){
-		G->Link[ij]->latency = linearCal(G->Link[ij]->use,G->Link[ij]->capacity);
+		G->Link[ij]->dist = linearCal(G->Link[ij]->use,G->Link[ij]->capacity);
 		
 	}
 	int totalnum = (*dem).size();
@@ -318,8 +319,8 @@ void evoluDivbit::Caldelay(){
 			if (GOR->Link[m]->tail == (*dem)[d].org && GOR->Link[m]->head == (*dem)[d].des && ((*dem)[d].flow>0)){
 				if(flag==false){
 					flag=true;
-					//vector<CEdge*> lg=G->reqlistPath[d][G->reqPathNo[d]]->listEdge; //KSP
-					vector<CEdge*> lg=G->reqlistPath[d][G->reqPathNo[d]]; //DFS
+					vector<CEdge*> lg=G->reqlistPath[d][G->reqPathNo[d]]->listEdge; //KSP
+					//vector<CEdge*> lg=G->reqlistPath[d][G->reqPathNo[d]]; //DFS
 					for(vector<CEdge*>::iterator lgi=lg.begin();lgi!=lg.end();lgi++) 
 							dmin += (*lgi)->latency;
 				}
@@ -330,7 +331,7 @@ void evoluDivbit::Caldelay(){
 			}
 		} 
 		if(flag == false)
-			GOR->Link[m]->dist = G->dijkstra(0,GOR->Link[m]->tail,GOR->Link[m]->head,0.0,0,0,0);
+			GOR->Link[m]->dist = G->dijkstra(GOR->Link[m]->tail,GOR->Link[m]->head,0);
 	} 
 }
 
